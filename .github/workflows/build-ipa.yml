@@ -1,8 +1,31 @@
 
-      - name: Inspect Xcode project
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
         run: |
           xcodebuild -version
           xcodebuild -list -project EudiReferenceWallet.xcodeproj
+
+      - name: Resolve Swift Packages
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project EudiReferenceWallet.xcodeproj \
+            -scheme "EUDI Wallet Dev"
 
       - name: Build Unsigned App
         shell: bash
@@ -15,7 +38,6 @@
             -configuration "Debug Dev" \
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
-            -verbose \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -24,12 +46,39 @@
       - name: Show build errors
         if: always()
         run: |
-          echo "========== XCODE ERRORS =========="
           grep -inE \
             'error:|failed|unable to|cycle|duplicate|not found|missing package' \
             build.log | tail -100 || true
 
-      - name: Upload build log
+      - name: Package into IPA
+        if: success()
+        run: |
+          set -euo pipefail
+
+          APP_PATH="build/Build/Products/Debug Dev-iphoneos/EUDI Wallet Dev.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Application bundle not found!"
+            find build/Build/Products -name "*.app"
+            exit 1
+          fi
+
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            Payload EUDIWalletDev.ipa
+
+      - name: Upload IPA Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EUDIWalletDev-IPA
+          path: EUDIWalletDev.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
